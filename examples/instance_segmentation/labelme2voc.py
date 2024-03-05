@@ -10,8 +10,27 @@ import sys
 
 import imgviz
 import numpy as np
+import cv2
 
 import labelme
+from p_tqdm import p_map
+
+
+def remove_zero_size_bbox(mask):
+    small_mask = cv2.resize(mask, (0, 0), fx=0.25, fy=0.25, interpolation=cv2.INTER_NEAREST)
+    unique_ids = np.unique(small_mask)
+    unique_org_ids = np.unique(mask)
+    for u_id in unique_ids:
+        curr_mask = small_mask == u_id
+        y, x = np.where(curr_mask != 0)
+        if (abs(max(y) - min(y)) <= 1 or abs(max(x) - min(x)) <= 1):
+            mask[mask == u_id] = 0
+
+    for u_id in unique_org_ids:
+        if (u_id not in unique_ids):
+            mask[mask == u_id] = 0
+
+    return mask
 
 
 def main():
@@ -32,6 +51,9 @@ def main():
     parser.add_argument(
         "--noviz", help="Flag to disable visualization", action="store_true"
     )
+    parser.add_argument(
+        "--no_save_cls_ins_images", help="Flag to disable image saving for class and instance", action="store_true"
+    )
     args = parser.parse_args()
 
     if osp.exists(args.output_dir):
@@ -39,13 +61,15 @@ def main():
         sys.exit(1)
     os.makedirs(args.output_dir)
     os.makedirs(osp.join(args.output_dir, "JPEGImages"))
-    os.makedirs(osp.join(args.output_dir, "SegmentationClass"))
+    if not args.no_save_cls_ins_images:
+        os.makedirs(osp.join(args.output_dir, "SegmentationClass"))
     if not args.nonpy:
         os.makedirs(osp.join(args.output_dir, "SegmentationClassNpy"))
     if not args.noviz:
         os.makedirs(osp.join(args.output_dir, "SegmentationClassVisualization"))
     if not args.noobject:
-        os.makedirs(osp.join(args.output_dir, "SegmentationObject"))
+        if not args.no_save_cls_ins_images:
+            os.makedirs(osp.join(args.output_dir, "SegmentationObject"))
         if not args.nonpy:
             os.makedirs(osp.join(args.output_dir, "SegmentationObjectNpy"))
         if not args.noviz:
@@ -77,9 +101,7 @@ def main():
         f.writelines("\n".join(class_names))
     print("Saved class_names:", out_class_names_file)
 
-    for filename in sorted(glob.glob(osp.join(args.input_dir, "*.json"))):
-        print("Generating dataset from:", filename)
-
+    def convert_file(filename):
         label_file = labelme.LabelFile(filename=filename)
 
         base = osp.splitext(osp.basename(filename))[0]
@@ -119,11 +141,13 @@ def main():
             label_name_to_value=class_name_to_id,
         )
         ins[cls == -1] = 0  # ignore it.
+        ins = remove_zero_size_bbox(ins)
 
         # class label
-        labelme.utils.lblsave(out_clsp_file, cls)
+        if not args.no_save_cls_ins_images:
+            labelme.utils.lblsave(out_clsp_file, cls)
         if not args.nonpy:
-            np.save(out_cls_file, cls)
+            np.savez_compressed(out_cls_file, cls=cls)
         if not args.noviz:
             clsv = imgviz.label2rgb(
                 cls,
@@ -136,9 +160,10 @@ def main():
 
         if not args.noobject:
             # instance label
-            labelme.utils.lblsave(out_insp_file, ins)
+            if not args.no_save_cls_ins_images:
+                labelme.utils.lblsave(out_insp_file, ins)
             if not args.nonpy:
-                np.save(out_ins_file, ins)
+                np.savez_compressed(out_ins_file, ins=ins)
             if not args.noviz:
                 instance_ids = np.unique(ins)
                 instance_names = [str(i) for i in range(max(instance_ids) + 1)]
@@ -150,6 +175,10 @@ def main():
                     loc="rb",
                 )
                 imgviz.io.imsave(out_insv_file, insv)
+
+    list_of_files = sorted(glob.glob(osp.join(args.input_dir, "*.json")))
+
+    results = p_map(convert_file, list_of_files, num_cpus=10)
 
 
 if __name__ == "__main__":
