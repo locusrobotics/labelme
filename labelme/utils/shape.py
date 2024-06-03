@@ -42,8 +42,9 @@ def shape_to_mask(img_shape, points, shape_type=None, line_width=10, point_size=
         r = point_size
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=1, fill=1)
     else:
-        assert len(xy) > 2, "Polygon must have points more than 2"
-        draw.polygon(xy=xy, outline=1, fill=1)
+        if (len(xy) > 2):
+            #assert len(xy) > 2, "Polygon must have points more than 2"
+            draw.polygon(xy=xy, outline=1, fill=1)
     mask = np.array(mask, dtype=bool)
     return mask
 
@@ -66,6 +67,9 @@ def shapes_to_label(img_shape, shapes, label_name_to_value):
         if instance not in instances:
             instances.append(instance)
         ins_id = instances.index(instance) + 1
+
+        if (cls_name not in label_name_to_value.keys()):
+            continue
         cls_id = label_name_to_value[cls_name]
 
         mask = shape_to_mask(img_shape[:2], points, shape_type)
